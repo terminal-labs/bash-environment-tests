@@ -1,29 +1,42 @@
 import configparser
 import subprocess
-from subprocess import check_output
-import time, sys
-import logging
 import threading
+import logging
 import time
+import time
+import sys
 import os
 
-def watch_progress(maxchecks):
+from pathlib import Path
+
+_poll_time = 1
+_poll_max = 3600
+_barlength = 20
+
+class Person:
+  def __init__(self):
+    self.name = "name"
+    self.age = "age"
+
+  def myfunc(self):
+    print("Hello my name is " + self.name)
+
+p1 = Person()
+
+def watch_progress(maxchecks, searchfor):
     def update_progress(progress):
-        barLength = 20
-        status = ""
+        barLength = _barlength
+        prefix = "Testing"
+        working = ""
+        done = "Done...\r\n"
+        status = "python - vagrant.conda"
         if isinstance(progress, int):
             progress = float(progress)
-        if not isinstance(progress, float):
-            progress = 0
-            status = "error: progress var must be float\r\n"
-        if progress < 0:
-            progress = 0
-            status = "Halt...\r\n"
         if progress >= 1:
             progress = 1
-            status = "Done...\r\n"
+            status = done
         block = int(round(barLength*progress))
-        text = "\rPercent: [{0}] {1}".format( "#"*block + "-"*(barLength-block), status)
+        text = "\r{0}: [{1}] {2}".format(prefix, "#"*block + "-"*(barLength-block), status)
         sys.stdout.write(text)
         sys.stdout.flush()
 
@@ -36,49 +49,68 @@ def watch_progress(maxchecks):
                     count = count + 1
         return count, len(searchfor)
 
-    searchfor = ["Bringing machine 'default' up with 'virtualbox' provider", "test session starts"]
-
     i = 0
     while i < maxchecks:
         check = count_progress_steps(searchfor)
         update_progress(check[0]/check[1])
         if check[0] == check[1]:
             return
-        time.sleep(1)
+        time.sleep(_poll_time)
         i = i + 1
 
+def init_progress_bar():
+    clear_logs()
+    #print(get_commands("python"))
+    searchfor = ["Bringing machine 'default' up with 'virtualbox' provider", "test session starts"]
+    x = threading.Thread(target=watch_progress, args=(_poll_max, searchfor))
+    x.start()
+    return x
 
-def test(dir,log,err):
+def clear_logs():
+    def remove_file(path):
+        path = Path(path)
+        if path.is_file():
+            os.remove(path)
+
+    remove_file("log")
+    remove_file("err")
+    log = open("log", "w")
+    err = open("err", "w")
+    return log,err
+
+def get_commands(type):
+    out = subprocess.Popen(
+        ['sudo', 'make', 'help'],
+        cwd="workspace/bash-environment-templates/samples/conda/python",
+        universal_newlines=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    log, err = out.communicate()
+    commands = log.split("\n")
+    commands.remove("")
+    return commands
+
+def test(dir):
+    log, err = clear_logs()
     config = configparser.ConfigParser()
     config.read('tests/python/test.ini')
-    out = subprocess.Popen(['sudo', 'make', 'vagrant.conda'], cwd="workspace/bash-environment-templates/samples/conda/python", universal_newlines=True, stdout=log, stderr=err)
+    out = subprocess.Popen(
+        ['sudo', 'make', 'vagrant.conda'],
+        cwd="workspace/bash-environment-templates/samples/conda/python",
+        universal_newlines=True,
+        stdout=log,
+        stderr=err
+    )
     out.wait()
 
-def scan_tests(dirs,log,err):
+def queue_tests(dirs):
     for dir in dirs:
         if dir == "python":
-            test(dir,log,err)
+            progress_bar_thread = init_progress_bar()
+            test(dir)
+            progress_bar_thread.join()
 
-os.remove("log")
-os.remove("err")
-log = open("log", "w", 1)
-err = open("err", "w", 1)
-
-x = threading.Thread(target=watch_progress, args=(3600,))
-x.start()
-
-scan_tests(os.listdir('tests'),log,err)
-
-x.join()
-
-os.remove("log")
-os.remove("err")
-log = open("log", "w", 1)
-err = open("err", "w", 1)
-
-x = threading.Thread(target=watch_progress, args=(3600,))
-x.start()
-
-scan_tests(os.listdir('tests'),log,err)
-
-x.join()
+if __name__ == '__main__':
+    queue_tests(os.listdir('tests'))
+    queue_tests(os.listdir('tests'))
